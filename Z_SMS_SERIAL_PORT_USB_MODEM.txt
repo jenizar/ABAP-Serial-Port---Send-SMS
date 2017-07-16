@@ -1,0 +1,117 @@
+REPORT Z_SMS_SERIAL_PORT_USB_MODEM.
+
+DATA : INPUT TYPE C.
+
+  TYPE-POOLS: sabc.
+  INCLUDE ole2incl.
+DATA: o_obj TYPE ole2_object.
+
+PARAMETERS p_mode TYPE I DEFAULT 1.              " Mode 1 = Write Port,
+PARAMETERS p_port TYPE I DEFAULT 12.             " Port Number (COM1, COM2, . . etc)
+PARAMETERS p_sett TYPE C LENGTH 10 DEFAULT '9600,N,8,1'.   " Baud rate : 2400, 9600, 57200, . . etc
+PARAMETERS p_mesg TYPE C LENGTH 160 DEFAULT 'Message Type Here'.  " Messages
+PARAMETERS p_telp TYPE C LENGTH 20 DEFAULT '+628561811XXX'.
+
+START-OF-SELECTION.
+
+ PERFORM init.
+  PERFORM open_port USING p_port p_sett.
+  IF p_mode = 0.
+    PERFORM read_port
+      CHANGING input.
+  ENDIF.
+  IF p_mode = 1.
+    PERFORM write_port
+      USING p_mesg
+      CHANGING input.
+  ENDIF.
+  PERFORM final.
+
+END-OF-SELECTION.
+
+FORM init.
+  DATA:
+    wa_repid LIKE sy-repid.
+  wa_repid = sy-repid.
+  CALL FUNCTION 'AUTHORITY_CHECK_OLE'
+    EXPORTING
+      program          = wa_repid
+      activity         = sabc_act_call
+      application      = 'MSCOMMLIB.MSCOMM.1'
+    EXCEPTIONS
+      no_authority     = 1
+      activity_unknown = 2
+      OTHERS           = 3.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+  CREATE OBJECT o_obj 'MSCOMMLib.MSComm.1'.
+  IF sy-subrc <> 0.
+    RAISE no_create_object.
+  ENDIF.
+ENDFORM.                    " Init
+"-------------------------------------------------------------------------------"
+FORM open_port USING p_port p_sett.
+  SET PROPERTY OF o_obj 'CommPort' = p_port. "commport.
+  SET PROPERTY OF o_obj 'Settings' = p_sett. " settings.
+  SET PROPERTY OF o_obj 'InputLen' = 0.
+  SET PROPERTY OF o_obj 'PortOpen' = 1.
+ENDFORM.                   "open_port
+"-------------------------------------------------------------------------------"
+FORM read_port
+  CHANGING input.
+  DATA:
+    wa_buffer TYPE i.
+  DO 10 TIMES.
+    GET PROPERTY OF o_obj 'InBufferCount' = wa_buffer.
+    IF wa_buffer > 0.
+      GET PROPERTY OF o_obj 'Input' = input.
+      EXIT.
+    ENDIF.
+  ENDDO.
+ENDFORM.                    " read_port
+"-------------------------------------------------------------------------------"
+FORM write_port
+      USING p_mesg
+      CHANGING input.
+  DATA:
+    wa_buffer TYPE i.
+DATA : lv_number TYPE C LENGTH 75.
+
+DATA : lv_ctrlz TYPE c.
+  FIELD-SYMBOLS: <fs_hex> TYPE any.
+  ASSIGN lv_ctrlz to <fs_hex> CASTING TYPE x.
+  <fs_hex> = '1A'.
+
+"  Set CSCS = "GSM" (Default "IRA")
+  SET PROPERTY OF o_obj 'Output' = 'AT+CSCS="GSM"'. "output.
+  SET PROPERTY OF o_obj 'Output' = cl_abap_char_utilities=>cr_lf.
+
+  SET PROPERTY OF o_obj 'Output' = 'AT+CMGF=1'. "output.
+  SET PROPERTY OF o_obj 'Output' = cl_abap_char_utilities=>cr_lf.
+
+CONCATENATE 'AT+CMGS=' '"' p_telp '"' INTO lv_number.
+
+  SET PROPERTY OF o_obj 'Output' = lv_number. " 'AT+CMGS="+628561811XXX"'.
+  SET PROPERTY OF o_obj 'Output' = cl_abap_char_utilities=>cr_lf.
+
+  WAIT UP TO 1 SECONDS.
+
+  SET PROPERTY OF o_obj 'Output' = p_mesg. "output.
+  SET PROPERTY OF o_obj 'Output' = lv_ctrlz.
+
+  WAIT UP TO 2 SECONDS.
+  DO 10 TIMES.
+    GET PROPERTY OF o_obj 'InBufferCount' = wa_buffer.
+    IF wa_buffer > 0.
+      GET PROPERTY OF o_obj 'Input' = input.
+      EXIT.
+    ENDIF.
+  ENDDO.
+ENDFORM.                    "write_port
+"-------------------------------------------------------------------------------"
+FORM final.
+  SET PROPERTY OF o_obj 'PortOpen' = 0.
+  FREE OBJECT o_obj.
+ENDFORM.                    " final
